@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>问数agent · 元数据入库</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <h1>问数agent</h1>
+      <p>原始库 → 元数据 → 向量库</p>
+    </div>
+    <nav class="nav">
+      <button class="nav-item active" data-tab="connections">连接配置</button>
+      <button class="nav-item" data-tab="meta-sync">元数据同步</button>
+      <button class="nav-item" data-tab="metadata">元数据编辑</button>
+      <button class="nav-item" data-tab="knowledge">知识库</button>
+      <button class="nav-item" data-tab="vector">向量库同步</button>
+      <button class="nav-item" data-tab="search">召回测试</button>
+      <button class="nav-item" data-tab="jobs">任务历史</button>
+    </nav>
+    <div class="sidebar-actions">
+      <button id="btn-refresh" class="btn secondary full" type="button">刷新状态</button>
+      <button id="btn-dispose-db" class="btn secondary full" type="button" title="远程 MySQL 连接数满时，释放平台占用的连接">释放 DB 连接</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- 连接配置 -->
+    <section id="tab-connections" class="tab active">
+      <header class="page-header">
+        <h2>连接配置</h2>
+        <p>按步骤配置：① 原始数据源 → ② 元数据库 → ③ 向量库。保存全部连接后将进入「元数据同步」。</p>
+      </header>
+
+      <div class="wizard-steps" id="conn-wizard-nav"></div>
+
+      <div class="conn-layout">
+        <div class="panel compact">
+          <h3 id="conn-engine-heading">选择平台类型</h3>
+          <div id="conn-engine-list" class="conn-type-list"></div>
+        </div>
+        <div class="panel compact">
+          <div class="panel-head">
+            <h3 id="conn-form-title">请选择类型</h3>
+            <span id="conn-source-tag" class="tag"></span>
+          </div>
+          <p id="conn-form-desc" class="hint"></p>
+
+          <div class="assist-box">
+            <label for="conn-paste">智能填表（粘贴 DSN / JDBC / 配置文本）</label>
+            <textarea id="conn-paste" rows="3" placeholder="例如：mysql+pymysql://user:pass@host:3306/dbname"></textarea>
+            <div class="btn-row">
+              <button id="btn-conn-parse" class="btn secondary" type="button">解析并填入</button>
+            </div>
+          </div>
+
+          <form id="conn-form" class="conn-form"></form>
+          <div id="conn-test-result" class="conn-result"></div>
+          <div class="btn-row">
+            <button id="btn-conn-prev" class="btn secondary" type="button">上一步</button>
+            <button id="btn-conn-dispose" class="btn secondary" type="button" title="释放平台占用的 MySQL 连接池">释放连接</button>
+            <button id="btn-conn-test" class="btn secondary" type="button" disabled>试连接</button>
+            <button id="btn-conn-save" class="btn primary" type="button" disabled>保存并继续</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 元数据同步 -->
+    <section id="tab-meta-sync" class="tab">
+      <header class="page-header">
+        <h2>元数据同步</h2>
+        <p>请按步骤手动执行：① 初始化 → ② 扫描 → ③ 确认元数据 → ④ 同步到元数据库 → ⑤ 在「向量库同步」构建索引。<strong>暂存区已有未同步数据时，② 扫描视为已完成（标绿），可直接去编辑。</strong></p>
+      </header>
+
+      <div class="cards" id="overview-cards"></div>
+
+      <div class="panel compact">
+        <h3>同步范围</h3>
+        <p class="hint" style="margin-bottom:0.5rem">增量写入（Upsert），支持全库 / 单表；单字段请在「元数据编辑」保存时同步。同步成功后对应暂存记录会清空，需重新扫描才能再次编辑。</p>
+        <p class="hint" style="margin-bottom:0.5rem">扫描（含重新扫描）会先<strong>清空整个暂存区</strong>，再写入本次扫描结果；指定表扫描时暂存区仅保留该表。指定表列表来自<strong>业务库</strong>，无需先全库扫描。</p>
+        <div class="scope-row">
+          <label class="scope-opt"><input type="radio" name="meta-scope" value="full" checked /> 全库</label>
+          <label class="scope-opt"><input type="radio" name="meta-scope" value="table" /> 指定表</label>
+          <select id="meta-scope-table" class="scope-select" disabled>
+            <option value="">— 请先扫描 —</option>
+          </select>
+        </div>
+        <label class="scope-opt purge-opt" id="meta-purge-wrap">
+          <input type="checkbox" id="meta-purge-missing" />
+          全库同步时硬删业务库已不存在的表
+        </label>
+        <label class="scope-opt purge-opt" id="meta-disable-wrap">
+          <input type="checkbox" id="meta-disable-absent" />
+          全库同步时软禁用不在暂存中的表（需先全库扫描；逐表同步时不要勾选）
+        </label>
+      </div>
+
+      <div class="panel">
+        <h3>环境检测</h3>
+        <div id="health-grid" class="health-grid"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>执行步骤</h3>
+        </div>
+        <div id="workflow-progress" class="wf-progress"></div>
+        <div id="workflow-steps" class="workflow-steps"></div>
+      </div>
+    </section>
+
+    <!-- 元数据编辑 -->
+    <section id="tab-metadata" class="tab">
+      <header class="page-header">
+        <h2>元数据编辑 · 确认元数据</h2>
+        <p>扫描后在此核对/修改表与字段说明（必填，仅写入元数据库，不会修改业务源表）。若 L1 已有同名表/字段说明，可点 <strong>一键匹配元数据库</strong> 继承到暂存。可按表 AI 补全；向量索引请在「向量库同步」构建。</p>
+      </header>
+
+      <div class="meta-subtabs btn-row">
+        <button type="button" class="btn secondary meta-subtab active" data-meta-panel="staging">表与字段</button>
+        <button type="button" class="btn secondary meta-subtab" data-meta-panel="relations">表关系</button>
+        <button type="button" class="btn secondary meta-subtab" data-meta-panel="metrics">指标</button>
+        <button type="button" class="btn secondary meta-subtab" data-meta-panel="synonyms">同义词</button>
+      </div>
+
+      <div id="meta-panel-staging" class="meta-panel">
+        <div id="staging-stats" class="panel compact"></div>
+        <div id="staging-pending-overview" class="panel compact hidden"></div>
+        <div class="btn-row" style="margin-bottom:0.75rem">
+          <button id="btn-staging-save-all" class="btn secondary" type="button" title="保存暂存区所有非空表/字段注释">一键保存注释</button>
+          <button id="btn-staging-llm-tables" class="btn secondary" type="button">AI 补全全部表注释</button>
+          <button id="btn-staging-llm-all-columns" class="btn secondary" type="button" title="逐表补全字段，单表限时 360 秒，失败自动跳过">AI 补全全部字段注释</button>
+          <button id="btn-staging-merge-l1" class="btn secondary" type="button" title="按库表名/字段名将元数据库已有说明合并进暂存（不覆盖手工编辑）">一键匹配元数据库</button>
+          <button id="btn-staging-clear" class="btn secondary" type="button" title="删除暂存区全部表/字段（未同步到元数据库的编辑将丢失）">清空暂存</button>
+          <button id="btn-staging-goto-sync" class="btn primary" disabled>同步到元数据库</button>
+        </div>
+        <div class="scope-row" style="margin-bottom:0.5rem;flex-wrap:wrap;gap:0.35rem 1rem">
+          <span class="hint">推荐流程：扫描 → 逐表<strong>保存</strong>到暂存 → 确认无误后点「同步到元数据库」<strong>一次性</strong>写入 L1（不支持逐表同步）</span>
+        </div>
+        <p class="hint" style="margin-bottom:0.75rem;font-size:0.85rem">
+          同步为<strong>增量 Upsert</strong>：将<strong>当前暂存区全部表/字段</strong>写入元数据库，未在暂存中的 L1 记录默认<strong>不改动</strong>（含 <code>is_enabled</code>）。
+          写入成功后暂存区清空。再次维护请先扫描。
+        </p>
+        <div class="scope-row" style="margin-bottom:0.75rem;flex-wrap:wrap;gap:0.35rem 1rem">
+          <span class="hint">AI 补全模式</span>
+          <label class="scope-opt"><input type="radio" name="llm-fill-mode" value="empty" checked /> 仅补空</label>
+          <label class="scope-opt"><input type="radio" name="llm-fill-mode" value="overwrite" /> 覆盖已有</label>
+        </div>
+        <label class="scope-opt purge-opt" style="margin-bottom:0.5rem;display:block">
+          <input type="checkbox" id="metadata-disable-absent" />
+          全库同步时软禁用不在暂存中的表（需先全库扫描；逐表同步时不要勾选）
+        </label>
+        <label class="scope-opt purge-opt" style="margin-bottom:1rem;display:block">
+          <input type="checkbox" id="metadata-purge-missing" />
+          全库同步时硬删业务库已不存在的表
+        </label>
+        <div class="search-row">
+          <input id="table-filter" type="text" placeholder="搜索表名或注释..." />
+        </div>
+        <div class="two-col">
+          <div class="panel compact">
+            <h3>暂存表 <span id="table-count" class="badge">0</span></h3>
+            <div id="table-list" class="table-list"></div>
+          </div>
+          <div class="panel compact">
+            <h3>字段编辑</h3>
+            <p id="column-hint" class="hint">点击左侧表名，编辑字段说明</p>
+            <div id="table-desc-edit" class="form-field" style="display:none;margin-bottom:0.75rem">
+              <label>表注释 <span id="table-source-tag" class="tag wait"></span></label>
+              <input id="table-desc-input" type="text" placeholder="填写表注释" />
+              <p id="table-hive-comment-hint" class="hint" style="margin-top:0.35rem;display:none"></p>
+              <div class="btn-row" style="margin-top:0.35rem">
+                <button id="btn-save-table-desc" class="btn secondary" type="button">保存表注释</button>
+                <button id="btn-save-all-cols" class="btn secondary" type="button">保存字段注释</button>
+                <button id="btn-llm-table" class="btn secondary" type="button" title="AI 补全当前表仍为空的字段说明">AI 补全字段注释</button>
+                <button id="btn-llm-table-desc" class="btn secondary" type="button" title="遵循上方 AI 补全模式">AI 补全表注释</button>
+              </div>
+              <p class="hint" style="margin-top:0.35rem;font-size:0.85rem">编辑仅写入暂存区；全部表确认后，点上方「同步到元数据库」一次性写入 L1。AI 补全模式见上方「仅补空 / 覆盖已有」</p>
+            </div>
+            <div id="column-list" class="column-list"></div>
+            <div id="l1-orphans-panel" class="panel compact hidden" style="margin-top:0.75rem">
+              <h4 style="margin:0 0 0.5rem;font-size:0.95rem">L1 遗留字段（源库已不存在，可能已改名）</h4>
+              <p class="hint" style="margin-bottom:0.5rem">可将旧字段说明手动映射到左侧「新增」字段，避免重新编写。</p>
+              <div id="l1-orphans-list"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="meta-panel-relations" class="meta-panel hidden">
+        <div class="panel-head" style="margin-bottom:0.75rem">
+          <h3>表 JOIN 关系</h3>
+          <p class="hint" style="margin:0 0 0.5rem;font-size:0.85rem">
+            JOIN <strong>无暂存区</strong>：点「保存」后直接写入元数据库；下方列表即为<strong>已保存</strong>的关系。
+            「启用」= 参与召回与 M-Schema；取消启用或删除时，<strong>会自动清理</strong>向量库中对应的 JOIN 向量。
+            批量向量化请至<strong>「向量库同步」</strong>，选「仅 JOIN」或「全库」构建。
+          </p>
+          <div class="btn-row">
+            <button id="btn-relation-new" class="btn secondary" type="button">新建关系</button>
+          </div>
+        </div>
+        <div id="relation-browse-wrap">
+          <div id="relation-filter-bar" class="relation-filter-bar">
+            <div class="relation-filter-field">
+              <label for="relation-filter-left">左表</label>
+              <div id="relation-filter-left-wrap" class="ws-combobox-mount"></div>
+            </div>
+            <div class="relation-filter-field">
+              <label for="relation-filter-right">右表</label>
+              <div id="relation-filter-right-wrap" class="ws-combobox-mount"></div>
+            </div>
+            <button id="relation-filter-clear" class="btn secondary" type="button">清空</button>
+            <span id="relation-filter-count" class="hint relation-filter-count"></span>
+          </div>
+          <div id="relation-list" class="l1-list"></div>
+        </div>
+        <div id="relation-form-wrap" class="panel compact l1-form-wrap hidden"></div>
+      </div>
+
+      <div id="meta-panel-metrics" class="meta-panel hidden">
+        <div class="panel-head" style="margin-bottom:0.75rem">
+          <h3>业务指标</h3>
+          <p class="hint" style="margin:0 0 0.5rem;font-size:0.85rem">
+            保存后直接写入元数据库。批量向量化请至<strong>「向量库同步」</strong>，选「仅指标」或「全库」构建。
+          </p>
+          <div class="btn-row">
+            <button id="btn-metric-new" class="btn secondary" type="button">新建指标</button>
+          </div>
+        </div>
+        <div id="metric-list" class="l1-list"></div>
+        <div id="metric-form-wrap" class="panel compact l1-form-wrap hidden"></div>
+      </div>
+
+      <div id="meta-panel-synonyms" class="meta-panel hidden">
+        <div class="panel-head" style="margin-bottom:0.75rem">
+          <h3>同义词映射</h3>
+          <div class="btn-row">
+            <button id="btn-synonym-new" class="btn secondary" type="button">新建同义词</button>
+            <button id="btn-synonym-seed" class="btn secondary" type="button" title="把领域口语种子写入 L1，之后可在此增删；召回只读本表">导入召回词典</button>
+          </div>
+        </div>
+        <p class="hint" style="margin-bottom:0.5rem">
+          口语 → 表/字段，问数召回会即时读取。字段同义词会写入该列的 synonyms，便于向量索引。保存后无需改代码。
+        </p>
+        <div class="search-row">
+          <input id="synonym-filter" type="text" placeholder="搜索词条、表名或字段名…" />
+        </div>
+        <div id="synonym-list" class="l1-list"></div>
+        <div id="synonym-form-wrap" class="panel compact l1-form-wrap hidden"></div>
+      </div>
+    </section>
+
+    <!-- 知识库 -->
+    <section id="tab-knowledge" class="tab">
+      <header class="page-header">
+        <h2>知识库</h2>
+        <p>维护业务文档与切片，写入元数据库后请在「向量库同步」构建索引（选「仅文档」或「全库」）。</p>
+      </header>
+      <div class="two-col">
+        <div class="panel compact">
+          <div class="panel-head">
+            <h3>文档</h3>
+            <button id="btn-doc-new" class="btn secondary" type="button">新建文档</button>
+          </div>
+          <div id="doc-list" class="l1-list"></div>
+          <div id="doc-form-wrap" class="l1-form-wrap hidden" style="margin-top:0.75rem"></div>
+        </div>
+        <div class="panel compact">
+          <div class="panel-head">
+            <h3>切片</h3>
+            <button id="btn-chunk-new" class="btn secondary" type="button" disabled>新建切片</button>
+          </div>
+          <p id="chunk-hint" class="hint">请先在左侧选择文档</p>
+          <div id="chunk-list" class="l1-list"></div>
+          <div id="chunk-form-wrap" class="l1-form-wrap hidden" style="margin-top:0.75rem"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 向量库同步 -->
+    <section id="tab-vector" class="tab">
+      <header class="page-header">
+        <h2>向量库同步</h2>
+        <p>将元数据库（L1）中的表/字段、JOIN、指标、文档等 embedding 写入 Qdrant。全库构建无超时限制，进度实时显示。</p>
+      </header>
+
+      <div class="cards" id="vector-cards"></div>
+
+      <div class="panel compact" id="model-settings-panel">
+        <h3>模型配置（Embedding / LLM）</h3>
+        <p class="hint" style="margin-bottom:0.65rem">
+          本地模式使用本机 GPU/CPU；线上模式使用 OpenAI 兼容 API（百炼、硅基流动、DeepSeek 等）。
+          切换 Embedding 模型后需<strong>全量重建</strong>向量索引。
+        </p>
+        <div class="model-settings-grid">
+          <fieldset class="model-fieldset">
+            <legend>Embedding（向量召回）</legend>
+            <label class="form-field">
+              <span>来源</span>
+              <select id="ms-emb-provider">
+                <option value="auto">自动（有 API Key 则线上）</option>
+                <option value="local">本地模型</option>
+                <option value="openai">线上 API</option>
+              </select>
+            </label>
+            <label class="form-field">
+              <span>本地模型路径/名称</span>
+              <input id="ms-emb-local-model" type="text" placeholder="F:/models/Qwen3-Embedding-0.6B" />
+            </label>
+            <label class="form-field">
+              <span>本地设备</span>
+              <select id="ms-emb-local-device">
+                <option value="auto">自动</option>
+                <option value="cpu">CPU</option>
+                <option value="cuda">GPU (CUDA)</option>
+              </select>
+            </label>
+            <label class="form-field">
+              <span>线上模型</span>
+              <input id="ms-emb-model" type="text" placeholder="text-embedding-v4" />
+            </label>
+            <label class="form-field">
+              <span>API Base URL</span>
+              <input id="ms-emb-api-base" type="text" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" />
+            </label>
+            <label class="form-field">
+              <span>API Key</span>
+              <input id="ms-emb-api-key" type="password" placeholder="留空则保持已保存的 Key" autocomplete="off" />
+            </label>
+            <label class="form-field">
+              <span>向量维度</span>
+              <input id="ms-emb-dim" type="number" min="64" max="4096" placeholder="1024" />
+            </label>
+          </fieldset>
+          <fieldset class="model-fieldset">
+            <legend>LLM（选列 / 抽词 / AI 注释）</legend>
+            <label class="form-field">
+              <span>来源</span>
+              <select id="ms-llm-provider">
+                <option value="auto">自动（有 API Key 则线上）</option>
+                <option value="ollama">本地 Ollama</option>
+                <option value="openai">线上 API</option>
+              </select>
+            </label>
+            <label class="form-field">
+              <span>Ollama 地址</span>
+              <input id="ms-llm-ollama-url" type="text" placeholder="http://127.0.0.1:11434" />
+            </label>
+            <label class="form-field">
+              <span>Ollama 模型</span>
+              <input id="ms-llm-ollama-model" type="text" placeholder="qwen3:4b" />
+            </label>
+            <label class="form-field">
+              <span>线上模型</span>
+              <input id="ms-llm-model" type="text" placeholder="qwen-plus" />
+            </label>
+            <label class="form-field">
+              <span>元数据注释模型（可选）</span>
+              <input id="ms-llm-metadata-model" type="text" placeholder="留空则与线上模型相同" />
+            </label>
+            <label class="form-field">
+              <span>API Base URL</span>
+              <input id="ms-llm-api-base" type="text" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" />
+            </label>
+            <label class="form-field">
+              <span>API Key</span>
+              <input id="ms-llm-api-key" type="password" placeholder="留空则保持已保存的 Key" autocomplete="off" />
+            </label>
+          </fieldset>
+        </div>
+        <div id="model-settings-status" class="hint" style="margin-top:0.5rem"></div>
+        <div class="btn-row" style="margin-top:0.65rem">
+          <button id="btn-model-save" class="btn primary" type="button">保存模型配置</button>
+          <button id="btn-model-test-emb" class="btn secondary" type="button">测试 Embedding</button>
+          <button id="btn-model-test-llm" class="btn secondary" type="button">测试 LLM</button>
+        </div>
+      </div>
+
+      <div class="panel compact">
+        <h3>构建向量索引</h3>
+        <p class="hint" style="margin-bottom:0.65rem">
+          从<strong>元数据库（L1）</strong>读取已启用对象并写入 Qdrant，<strong>不依赖暂存区</strong>。
+          日常维护表/字段选「仅表与字段」；维护 JOIN/指标/文档后选对应类型；首次或不确定时选「全库」。
+        </p>
+        <div class="scope-row" style="flex-wrap:wrap;gap:0.35rem 1rem">
+          <span class="hint">构建对象</span>
+          <label class="scope-opt"><input type="radio" name="vector-scope" value="full" checked /> 全库</label>
+          <label class="scope-opt"><input type="radio" name="vector-scope" value="schema" /> 仅表与字段</label>
+          <label class="scope-opt"><input type="radio" name="vector-scope" value="join" /> 仅 JOIN</label>
+          <label class="scope-opt"><input type="radio" name="vector-scope" value="metric" /> 仅指标</label>
+          <label class="scope-opt"><input type="radio" name="vector-scope" value="doc_chunk" /> 仅文档</label>
+          <label class="scope-opt"><input type="radio" name="vector-scope" value="table" /> 指定表</label>
+          <label class="scope-opt"><input type="radio" name="vector-scope" value="column" /> 指定字段</label>
+        </div>
+        <div id="vector-scope-pickers" class="scope-row" style="margin-top:0.5rem;display:none">
+          <select id="vector-scope-table" class="scope-select">
+            <option value="">— 选择表 —</option>
+          </select>
+          <select id="vector-scope-column" class="scope-select" style="display:none">
+            <option value="">— 选择字段 —</option>
+          </select>
+        </div>
+        <div class="btn-row" style="margin-top:0.75rem">
+          <button id="btn-vector-run" class="btn primary">构建向量索引</button>
+          <button id="btn-vector-full" class="btn secondary">全量重建</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>索引状态</h3>
+        <div id="vector-health" class="health-grid"></div>
+        <div id="vector-log" class="log" style="margin-top:0.75rem;max-height:200px"></div>
+      </div>
+    </section>
+
+    <!-- 召回测试 -->
+    <section id="tab-search" class="tab">
+      <header class="page-header">
+        <h2>召回测试</h2>
+        <p>验证向量索引是否能召回正确的表/字段</p>
+      </header>
+      <div class="panel">
+        <div class="search-row">
+          <input id="search-input" type="text" placeholder="例如：借据逾期天数、产品回款率_7、客户授信余额" />
+          <button id="btn-search" class="btn primary">测试检索</button>
+          <button id="btn-mschema" class="btn secondary" type="button" title="向量召回后按 XiYan M-Schema 格式生成 schema">生成 M-Schema</button>
+        </div>
+        <div class="form-field" style="margin-top:0.65rem">
+          <label for="search-evidence">Evidence（可选，业务别名/口径，参与分角色拆解）</label>
+          <input id="search-evidence" type="text" placeholder="例如：借据=dwd_ar_loan_info；实还本金=princ" />
+        </div>
+        <div class="scope-row" style="margin-top:0.65rem;flex-wrap:wrap;gap:0.5rem 1rem">
+          <label class="scope-opt">
+            <input id="search-scope-current" type="checkbox" checked />
+            仅当前原始库 <span id="search-current-db" class="hint"></span>
+          </label>
+          <label class="scope-opt">
+            <input id="search-scope-all" type="checkbox" />
+            搜索全部已索引库
+          </label>
+        </div>
+        <p id="search-scope-hint" class="hint" style="margin-top:0.35rem"></p>
+        <div id="search-result" class="search-results"></div>
+        <pre id="mschema-output" class="code-block hidden" style="margin-top:0.75rem;max-height:420px;overflow:auto"></pre>
+      </div>
+    </section>
+
+    <!-- 任务历史 -->
+    <section id="tab-jobs" class="tab">
+      <header class="page-header">
+        <h2>任务历史</h2>
+        <p>查看平台执行过的后台任务</p>
+      </header>
+      <div id="jobs-list" class="jobs-list"></div>
+    </section>
+  </main>
+
+  <div id="loading-overlay" class="loading-overlay" aria-hidden="true" role="alertdialog" aria-labelledby="loading-title">
+    <div class="loading-dialog">
+      <div class="loading-spinner" aria-hidden="true"></div>
+      <h3 id="loading-title">请稍候</h3>
+      <div class="loading-message-wrap">
+        <p id="loading-message" class="loading-message">正在处理…</p>
+      </div>
+      <div class="loading-bar-track" aria-hidden="true">
+        <div id="loading-bar-fill" class="loading-bar-fill"></div>
+      </div>
+      <ol id="loading-steps" class="loading-steps"></ol>
+      <button id="loading-cancel" type="button" class="btn secondary loading-cancel" style="display:none">取消</button>
+      <button id="loading-dismiss" type="button" class="btn primary loading-dismiss" style="display:none">确定</button>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+  <script src="/static/l1_edit.js"></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "version": "1.0",
+  "description": "问数平台 MySQL 元数据库建表模板（按模块拆分，由 init_platform_schema 按序执行）",
+  "sections": [
+    {
+      "id": "l1_core",
+      "file": "01_l1_core.sql",
+      "label": "L1 表/字段/关系/指标/同义词"
+    },
+    {
+      "id": "l1_knowledge",
+      "file": "02_l1_knowledge.sql",
+      "label": "L2 知识库文档与切片"
+    },
+    {
+      "id": "vector_log",
+      "file": "03_vector_index_log.sql",
+      "label": "向量索引同步日志"
+    },
+    {
+      "id": "staging",
+      "file": "04_staging.sql",
+      "label": "扫描暂存区"
+    }
+  ]
+}
