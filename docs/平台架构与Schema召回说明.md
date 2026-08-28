@@ -2,10 +2,10 @@
 
 | 属性 | 内容 |
 |------|------|
-| 版本 | v1.0 |
-| 更新日期 | 2026-08-24 |
-| 适用代码 | 平台 v2.3.0 / XiYan 式 Schema 召回 |
-| 关联文档 | [L1/L2/向量库架构](./架构-L1元数据-L2知识库-向量库.md)、[XiYan 优化路线](./XiYan式Schema召回优化路线.md)、[召回评测手册](./召回测试实验操作手册.md)、[PRD](./PRD-问数Agent.md) |
+| 版本 | v1.1 |
+| 更新日期 | 2026-08-28 |
+| 适用代码 | 平台 v2.3+ / XiYan 召回 + 问数 Agent |
+| 关联文档 | [使用说明](./使用说明.md)、[配置与参数说明](./配置与参数说明.md)、[问数Agent技术说明](./问数Agent技术说明.md)、[L1/L2/向量库架构](./架构-L1元数据-L2知识库-向量库.md)、[XiYan 优化路线](./XiYan式Schema召回优化路线.md)、[召回评测手册](./召回测试实验操作手册.md)、[PRD](./PRD-问数Agent.md) |
 
 ---
 
@@ -325,6 +325,8 @@ python scripts/run_platform.py   # 默认 http://127.0.0.1:8765
 | **`POST /api/search/test`** | 在线召回测试（调 `retrieve_schema`） |
 | **`POST /api/nl2sql/mschema`** | 问句 → M-Schema 文本 |
 | **`POST /api/nl2sql/prompt`** | 完整 NL2SQL Prompt |
+| **`POST /api/agent/query`** | 问数 Agent 全链路 |
+| **`POST /api/agent/approve`** | 敏感 SQL 人工审批 resume |
 | `GET/PUT /api/model-settings` | Embedding / LLM 配置 |
 | `GET/PUT /api/connections/*` | 数据库连接 |
 
@@ -335,20 +337,37 @@ python scripts/run_platform.py   # 默认 http://127.0.0.1:8765
 | `python scripts/build_vector_index.py [--full]` | 构建/重建向量 |
 | `python scripts/apply_concept_meta_alignment.py` | DWD 概念 meta 对齐 |
 | `python evals/scripts/run_recall_eval.py` | 批量召回评测 |
+| `python evals/scripts/run_sql_eval.py` | 召回 + SQL 联合评测 |
+| `python evals/scripts/attach_gold_sql.py` | 为黄金集生成 gold_sql |
 | `python scripts/init_platform_schema.py` | 初始化元数据 DDL |
 
 ---
 
 ## 9. 配置要点
 
+完整参数见 **[配置与参数说明.md](./配置与参数说明.md)**。常用项：
+
 | 变量 | 默认 | 说明 |
 |------|------|------|
 | `SCHEMA_KEYWORD_MODE` | auto | 关键词：LLM 优先，失败回退规则 |
 | `SCHEMA_COLUMN_SELECT` | 1 | 是否启用 S1/S2 |
+| `AGENT_SQL_MULTI_CANDIDATE` | 1 | M7 首轮多候选（icecoding 默认） |
+| `AGENT_SQL_XIYAN_PIPELINE` | 0 | XiYan 执行选优流程（可选） |
 | `EMBEDDING_PROVIDER` | openai / local | 向量模型 |
 | `QDRANT_COLLECTION` | wenshu_knowledge | 集合名 |
 
 平台 UI 写入的 `.wenshu/model_settings.json`、`.wenshu/connections.json` **优先于** `.env`。
+
+---
+
+## 9.1 问数 Agent（概要）
+
+端到端编排见 **[问数Agent技术说明.md](./问数Agent技术说明.md)**。SQL 生成两条路径：
+
+| 路径 | 开关 | 说明 |
+|------|------|------|
+| icecoding（默认） | `AGENT_SQL_XIYAN_PIPELINE=0` | 确定性编译 → 多候选 AST 打分 → M8/M10 重试 |
+| XiYan 可选 | `AGENT_SQL_XIYAN_PIPELINE=1` | S1/S2 双 schema + 执行聚类选优 |
 
 ---
 
@@ -367,6 +386,9 @@ python scripts/run_platform.py   # 默认 http://127.0.0.1:8765
 
 | 文档 | 内容 |
 |------|------|
+| [使用说明.md](./使用说明.md) | 平台功能、工作流、API |
+| [配置与参数说明.md](./配置与参数说明.md) | 环境变量与调参 |
+| [问数Agent技术说明.md](./问数Agent技术说明.md) | Agent 编排、与 icecoding 对比 |
 | [架构-L1元数据-L2知识库-向量库.md](./架构-L1元数据-L2知识库-向量库.md) | 三层存储、DDL、embed 细节 |
 | [XiYan式Schema召回优化路线.md](./XiYan式Schema召回优化路线.md) | 优化项路线图、Phase 划分 |
 | [召回测试实验操作手册.md](./召回测试实验操作手册.md) | 评测操作、失败标签、指标解读 |

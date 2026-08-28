@@ -1,0 +1,17 @@
+# 敏感判定规则（对齐 icecoding M9）
+sensitive_fields:
+  - {name: idnum, keywords: [身份证, 证件号, 证件号码, idnum]}
+  - {name: phone_no, keywords: [手机号, 电话, phone, mobile]}
+  - {name: name, keywords: [姓名]}
+
+explain_scan:
+  threshold: 1000000
+  action: hard_block
+
+amount_field_keywords: [金额, 贷款金额, 本金, 余额, amount, principal, bal, amt]
+
+aggregation_trigger:
+  enabled: true
+
+export_trigger:
+  enabled: true

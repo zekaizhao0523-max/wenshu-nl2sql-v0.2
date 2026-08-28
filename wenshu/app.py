@@ -73,6 +73,7 @@ from wenshu.services.l1_meta import (  # noqa: E402
     save_relation,
     save_synonym,
 )
+from wenshu.services.health import get_workflow_status  # noqa: E402
 from wenshu.services.stats import get_overview, list_columns, list_tables, metadata_tables_exist  # noqa: E402
 from wenshu.services.sync_mysql import list_raw_business_tables  # noqa: E402
 
@@ -139,6 +140,24 @@ class SearchRequest(BaseModel):
         default=False,
         description="跳过澄清闸门（评测/调试）",
     )
+
+
+class AgentQueryRequest(BaseModel):
+    """对齐 icecoding：编排主链路（澄清 → 召回 → QueryPlan → SQL → 风险 → 沙箱）。"""
+
+    query: str = Field(min_length=1, max_length=500)
+    evidence: str = Field(default="", max_length=4000)
+    trace_id: Optional[str] = None
+    clarify_answers: Optional[dict[str, str]] = None
+    keyword_mode: Optional[str] = "rule"
+    column_select: bool = False
+    skip_sandbox: Optional[bool] = None
+
+
+class AgentApproveRequest(BaseModel):
+    trace_id: str = Field(min_length=1)
+    approved: bool = True
+    skip_sandbox: Optional[bool] = None
 
 
 class MSchemaRequest(BaseModel):
@@ -1047,6 +1066,46 @@ def api_nl2sql_prompt(body: Nl2SqlPromptRequest):
         "evidence": body.evidence,
         "prompt": prompt,
     }
+
+
+@app.post("/api/agent/query")
+def api_agent_query(body: AgentQueryRequest):
+    """问数 Agent 编排入口（对齐 icecoding graph 主链路）。"""
+    from wenshu.services.agent.orchestrator import run_agent
+
+    try:
+        state = run_agent(
+            body.query,
+            body.evidence or "",
+            trace_id=body.trace_id,
+            clarify_answers=body.clarify_answers,
+            keyword_mode=body.keyword_mode,
+            column_select=body.column_select,
+            skip_sandbox=body.skip_sandbox,
+        )
+        return {"ok": True, **state.as_dict()}
+    except Exception as exc:
+        raise HTTPException(500, f"Agent 执行失败: {exc}") from exc
+
+
+@app.post("/api/agent/approve")
+def api_agent_approve(body: AgentApproveRequest):
+    """人工审批 resume（对齐 icecoding human_review）。"""
+    from wenshu.services.agent.orchestrator import run_agent
+
+    try:
+        state = run_agent(
+            question="",
+            evidence="",
+            trace_id=body.trace_id,
+            human_approved=body.approved,
+            skip_sandbox=body.skip_sandbox,
+        )
+        return {"ok": True, **state.as_dict()}
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(500, f"审批恢复失败: {exc}") from exc
 
 
 @app.post("/api/search/test")

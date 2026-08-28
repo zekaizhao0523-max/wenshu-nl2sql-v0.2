@@ -19,6 +19,7 @@
       <button class="nav-item" data-tab="knowledge">知识库</button>
       <button class="nav-item" data-tab="vector">向量库同步</button>
       <button class="nav-item" data-tab="search">召回测试</button>
+      <button class="nav-item" data-tab="agent">问数 Agent</button>
       <button class="nav-item" data-tab="jobs">任务历史</button>
     </nav>
     <div class="sidebar-actions">
@@ -446,6 +447,29 @@
         <p id="search-scope-hint" class="hint" style="margin-top:0.35rem"></p>
         <div id="search-result" class="search-results"></div>
         <pre id="mschema-output" class="code-block hidden" style="margin-top:0.75rem;max-height:420px;overflow:auto"></pre>
+      </div>
+    </section>
+
+    <!-- 问数 Agent（对齐 icecoding 编排） -->
+    <section id="tab-agent" class="tab">
+      <header class="page-header">
+        <h2>问数 Agent</h2>
+        <p>语义图 → Schema 召回 → QueryPlan → SQL → 风险审批 → 只读沙箱（对齐 icecoding 主链路）</p>
+      </header>
+      <div class="panel">
+        <div class="search-row">
+          <input id="agent-input" type="text" placeholder="例如：年龄大于30的客户有多少" />
+          <button id="btn-agent-run" class="btn primary" type="button">运行 Agent</button>
+        </div>
+        <div class="form-field" style="margin-top:0.65rem">
+          <label for="agent-evidence">Evidence（可选）</label>
+          <input id="agent-evidence" type="text" placeholder="业务补充口径" />
+        </div>
+        <label class="scope-opt" style="display:inline-flex;margin-top:0.5rem">
+          <input id="agent-skip-sandbox" type="checkbox" />
+          仅生成 SQL，不执行沙箱
+        </label>
+        <div id="agent-result" class="search-results" style="margin-top:0.75rem"></div>
       </div>
     </section>
 

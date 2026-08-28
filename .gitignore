@@ -12,6 +12,7 @@ venv/
 *.log
 *.zip
 *.db
+_tmp/
 data/
 models/
 evals/reports/*.json

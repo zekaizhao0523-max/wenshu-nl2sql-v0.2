@@ -2833,4 +2833,135 @@ $("#btn-model-test-llm")?.addEventListener("click", async () => {
   }
 });
 
+let agentTraceId = null;
+
+function renderAgentState(data) {
+  const el = $("#agent-result");
+  if (!el) return;
+  agentTraceId = data.trace_id || agentTraceId;
+  const steps = (data.trace_steps || []).join(" → ") || "—";
+  const plan = data.query_plan
+    ? `<pre class="code-block" style="max-height:180px;overflow:auto">${escapeHtml(
+        JSON.stringify(data.query_plan, null, 2)
+      )}</pre>`
+    : "";
+  const rows = Array.isArray(data.execution_result) ? data.execution_result : [];
+  const table =
+    rows.length > 0
+      ? `<div class="hint">结果 ${data.row_count || rows.length} 行${
+          data.truncated ? "（截断）" : ""
+        }</div><pre class="code-block" style="max-height:220px;overflow:auto">${escapeHtml(
+          JSON.stringify(rows.slice(0, 20), null, 2)
+        )}</pre>`
+      : "";
+
+  let actions = "";
+  if (data.status === "need_clarify") {
+    const qs = data.clarify_questions || [];
+    actions =
+      qs
+        .map(
+          (q) => `<div class="form-field" style="margin-top:0.5rem">
+      <label>${escapeHtml(q.prompt || q.id)}</label>
+      <input class="agent-clarify-answer" data-qid="${escapeHtml(q.id)}" type="text"
+        placeholder="${escapeHtml((q.options && q.options[0]) || "请补充")}" />
+    </div>`
+        )
+        .join("") +
+      `<button id="btn-agent-clarify" class="btn" type="button" style="margin-top:0.5rem">补充后继续</button>`;
+  }
+  if (data.status === "need_approval") {
+    actions = `<div class="hint" style="margin:0.5rem 0">风险：${escapeHtml(
+      (data.sensitive_reasons || []).join("；") || "需审批"
+    )}</div>
+    <button id="btn-agent-approve" class="btn primary" type="button">批准执行</button>
+    <button id="btn-agent-reject" class="btn secondary" type="button">拒绝</button>`;
+  }
+
+  el.innerHTML = `
+    <div class="hint">状态：<strong>${escapeHtml(data.status || "")}</strong>
+      · trace=${escapeHtml(data.trace_id || "")}</div>
+    <div class="hint" style="margin:0.35rem 0">链路：${escapeHtml(steps)}</div>
+    <div class="hint">${escapeHtml(data.final_answer || "")}</div>
+    ${
+      data.generated_sql
+        ? `<div class="hint" style="margin-top:0.5rem">SQL</div><pre class="code-block">${escapeHtml(
+            data.generated_sql
+          )}</pre>`
+        : ""
+    }
+    ${plan ? `<div class="hint" style="margin-top:0.5rem">QueryPlan</div>${plan}` : ""}
+    ${table}
+    ${actions}`;
+
+  $("#btn-agent-clarify")?.addEventListener("click", async () => {
+    const answers = {};
+    document.querySelectorAll(".agent-clarify-answer").forEach((inp) => {
+      const v = inp.value.trim();
+      if (v) answers[inp.getAttribute("data-qid")] = v;
+    });
+    await runAgent({
+      query: $("#agent-input").value.trim(),
+      evidence: $("#agent-evidence")?.value?.trim() || "",
+      trace_id: agentTraceId,
+      clarify_answers: answers,
+    });
+  });
+  $("#btn-agent-approve")?.addEventListener("click", async () => {
+    const res = await api("/api/agent/approve", {
+      method: "POST",
+      body: JSON.stringify({
+        trace_id: agentTraceId,
+        approved: true,
+        skip_sandbox: !!$("#agent-skip-sandbox")?.checked,
+      }),
+    });
+    renderAgentState(res);
+  });
+  $("#btn-agent-reject")?.addEventListener("click", async () => {
+    const res = await api("/api/agent/approve", {
+      method: "POST",
+      body: JSON.stringify({ trace_id: agentTraceId, approved: false }),
+    });
+    renderAgentState(res);
+  });
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function runAgent(extra = {}) {
+  const query = extra.query || $("#agent-input")?.value?.trim();
+  if (!query) return;
+  const el = $("#agent-result");
+  if (el) el.innerHTML = '<div class="hint">Agent 运行中…</div>';
+  try {
+    const body = {
+      query,
+      evidence: extra.evidence ?? ($("#agent-evidence")?.value?.trim() || ""),
+      keyword_mode: "rule",
+      column_select: false,
+      skip_sandbox: !!$("#agent-skip-sandbox")?.checked,
+      ...extra,
+    };
+    const data = await api("/api/agent/query", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    renderAgentState(data);
+  } catch (e) {
+    if (el) el.innerHTML = `<div class="hint status-bad">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+$("#btn-agent-run")?.addEventListener("click", () => {
+  agentTraceId = null;
+  runAgent();
+});
+
 initApp();
